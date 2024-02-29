@@ -1,3 +1,5 @@
+# AutoCoin Trading
+
 ### Errors
 
 - InsufficientFundsBid : 계좌에 돈이 모자랄 때
