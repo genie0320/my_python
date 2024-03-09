@@ -86,7 +86,7 @@ def get_ex_vols(period:str):
     coin_data = pd.DataFrame()
     # tickers = ['KRW-ETH','KRW-SSX']
     print(f'거래가능한 코인의 수 : ', len(tickers))
-    now = time.time()
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
 
     for ticker in tickers:
         try:

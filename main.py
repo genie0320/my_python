@@ -52,22 +52,32 @@ def my_strategy(df, coin) -> list:
 
 def order(coin, position) -> str:
 
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+
     try:
         if position == 'BUY':
+            data = [now]
             # 스프레드매매는 일단 생각하지 않기로. 
-            # 코인 구매시에, 익절가격을 미리 정해서 동일 물량을 지정가로 걸어두기.
             # cash = upbit.get_balance('KRW')
             cash = 5100
             current_price = pyupbit.get_current_price(coin)
 
             volume = current_price / cash
             bid = upbit.buy_market_order(coin, cash)
-            
-            ask_price = pyupbit.get_tick_size(current_price * 1.05)
+            time.sleep(5)
+
+            # 구매완료시까지 잠시 기다렸다가...
+            # 익절가격을 미리 정해서 동일 물량을 지정가로 걸어두기.
+            put_order = upbit.get_order(coin, state="done")
+            buy_price = float(put_order[0]['avg_buy_price'])
+            ask_price = pyupbit.get_tick_size(buy_price * 1.05)
             ask = upbit.sell_limit_order(coin, ask_price, volume)
 
+            data.append(bid)
+            data.append(ask)
+
             with open('spread_cnt.json', 'a') as f:
-                json.dump({bid, ask}, f)
+                json.dump(data, f)
 
             return (f'{coin} 구매완료 / {volume}')
         
@@ -111,6 +121,11 @@ def cut_loss(my_balance) -> list:
                 earning_rate = ((avg_buy_price - current_price) / avg_buy_price) * 100
                 print(f'{coin}을 익절했습니다. {round(earning_rate,2)}%')
             elif current_price <= cut_line:
+                put_order = upbit.get_order(coin)
+                upbit.cancel_order(put_order[0]['uuid'])
+                print(f"손절을 위해 주문을 취소했습니다. {put_order[0]['uuid']}")
+                time.sleep(5)
+
                 upbit.sell_market_order(coin, my_balance[i]['balance'])
                 loss_rate = ((avg_buy_price - current_price) / avg_buy_price) * 100
                 print(f'{coin}을 손절했습니다. {round(loss_rate,2)}%')
@@ -123,11 +138,11 @@ def cut_loss(my_balance) -> list:
     return my_coin
 
 def main() -> None:
-    # myfunc.get_ex_vols("minute15")
+    myfunc.get_ex_vols("minute15")
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
     print(f'거래를 시작합니다. {now}')
 
     my_balance = upbit.get_balances()
-    now = time.strftime('%Y-%m-%d %H:%M:%S')
     ex_history = [now]
 
     if len(my_balance) > 1:
@@ -160,7 +175,7 @@ def main() -> None:
         json.dump(ex_history, file, ensure_ascii=False)
     
     _now = time.strftime('%Y-%m-%d %H:%M:%S')
-    print(f'정상적으로 처리가 완료되었습니다. {_now-now} 소요')
+    print(f'정상적으로 처리가 완료되었습니다. {_now}')
 
 if __name__ == "__main__":
     # 관련 세팅은 myIndex.py의 get_all_df 함수에서 진행할 것. 귀찮다...    
