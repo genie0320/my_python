@@ -1,37 +1,44 @@
+# %%
 import os
 import time
 import json
-import pyupbit
+import pyupbit # type: ignore
+import pandas as pd
 
 # Optional
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning) # FutureWarning 제거
 from dotenv import load_dotenv
-import myfunc as myfunc
+import myfunc
 
 load_dotenv()
 
 access_key = os.getenv("UPBIT_OPEN_API_ACCESS_KEY")
 secret_key = os.getenv("UPBIT_OPEN_API_SECRET_KEY")
 upbit = pyupbit.Upbit(access_key, secret_key)
+# %%
+def select_todays_coin() -> list:
+    pass
 
-def my_strategy(df, coin) -> list:
+# %%
 
+def my_strategy(df: pd.DataFrame) -> list:
+    final_result:str = ''
     ma_sig, macd_sig, rsi_sig = False, False, False
 
-    ma_short = df['ma_short'][-1]
-    ma_long = df['ma_long'][-1]
-    close_prev = df['close'][-2]
-    close = df['close'][-1]
+    ma_short = df['ma_short'].iloc[-1]
+    ma_long = df['ma_long'].iloc[-1]
+    close_prev = df['close'].iloc[-2]
+    close = df['close'].iloc[-1]
 
-    macd = df['macd'][-1]
-    macd_signal = df['macd_signal'][-1]
-    macd_osc = df['macd_osc'][-1]
-    macd_osc_prev = df['macd_osc'][-2]
+    macd = df['macd'].iloc[-1]
+    macd_signal = df['macd_signal'].iloc[-1]
+    macd_osc = df['macd_osc'].iloc[-1]
+    macd_osc_prev = df['macd_osc'].iloc[-2]
 
-    rsi_prev = df['RSI'][-2]
-    rsi = df['RSI'][-1]
-    rsi_signal = df['RSI_SIGNAL'][-1]
+    rsi_prev = df['RSI'].iloc[-2]
+    rsi = df['RSI'].iloc[-1]
+    rsi_signal = df['RSI_SIGNAL'].iloc[-1]
 
     try:
         if ma_short > ma_long and close > ma_short and close > close_prev:
@@ -43,16 +50,18 @@ def my_strategy(df, coin) -> list:
                 rsi_sig = True
 
         if ma_sig and macd_sig and rsi_sig:
-            return ['BUY']
+            final_result = 'BUY'
         else:
-            return ['KEEP', [ma_sig, macd_sig, rsi_sig]]
+            final_result = 'KEEP'
    
     except Exception as e:
         print(e)
+    
+    return [final_result, [ma_sig, macd_sig, rsi_sig]]
 
-def order(coin, position) -> str:
-
-    now = time.strftime('%Y-%m-%d %H:%M:%S')
+def order(coin:str, position:str) -> str:
+    res = ''
+    now = myfunc.get_time()
 
     try:
         if position == 'BUY':
@@ -91,13 +100,15 @@ def order(coin, position) -> str:
             current_price = pyupbit.get_current_price(coin)
             earning_rate = ((current_price - avg_buy_price) / avg_buy_price) * 100
 
-            return (f'{coin}을 매각완료. {round(earning_rate,2)}%')
+            res = f'{coin}을 매각완료. {round(earning_rate,2)}%'
         
         elif position == 'KEEP':
-            return (f'{coin} 관망')
+            res = f'{coin} 관망'
 
     except Exception as e:
         print('Exception From order() - ', e)
+
+    return res
 
 def get_coin_acc(coin):
     my_balance = upbit.get_balances()
@@ -137,12 +148,26 @@ def cut_loss(my_balance) -> list:
 
     return my_coin
 
+def put_limit(my_balance):
+    put_order = []
+    for coin in my_balance:
+        if float(coin['avg_buy_price']) > 0:
+            coin_name = 'KRW-'+coin['currency']
+            buy_price = float(coin['avg_buy_price'])
+            target_price = pyupbit.get_tick_size(buy_price * (1.0 + 0.05))
+            ask = upbit.sell_limit_order(coin_name, target_price, coin['balance'])
+
+            put_order.append(ask)
+    
+    return put_order
+
 def main() -> None:
-    myfunc.get_ex_vols("minute15")
-    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    # myfunc.get_ex_vols("minute15")
+    now = myfunc.get_time()
     print(f'거래를 시작합니다. {now}')
 
     my_balance = upbit.get_balances()
+    cash = float(upbit.get_balance('KRW'))
     ex_history = [now]
 
     if len(my_balance) > 1:
@@ -153,7 +178,7 @@ def main() -> None:
         remain_coin = []
 
     # 만약 현금이 남아 있다면 다음을 진행.
-    if upbit.get_balance('KRW-KRW') > 5000:
+    if cash > 5000:
 
         # 안전한 코인을 구해와서
         safe_coin = myfunc.get_safe_coin()
@@ -162,10 +187,10 @@ def main() -> None:
 
         for coin in target_coin:
             # 데이터셋을 마련하고
-            df = myfunc.get_all_df(coin)
+            df: pd.DataFrame = myfunc.get_all_df(coin)
 
             # 포지션을 정한다. 
-            position = my_strategy(df, coin)
+            position = my_strategy(df)
             # print(coin, position)
 
             orders = order(coin, position[0])            
@@ -173,8 +198,13 @@ def main() -> None:
 
     with open('ex_rerult.json', 'a', encoding='utf-8') as file:
         json.dump(ex_history, file, ensure_ascii=False)
+
+    time.sleep(10)
     
-    _now = time.strftime('%Y-%m-%d %H:%M:%S')
+    my_balance2 = upbit.get_balances()
+    print(put_limit(my_balance2))
+    
+    _now = myfunc.get_time()
     print(f'정상적으로 처리가 완료되었습니다. {_now}')
 
 if __name__ == "__main__":

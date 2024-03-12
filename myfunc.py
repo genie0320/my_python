@@ -1,13 +1,25 @@
+#%%
 import os
 import time
+import pytz
+from datetime import datetime
 import requests
 import json
-
 import pickle
 import pyupbit
 import pandas as pd
 
 import myIndex as myIndex
+
+def get_time(_type=1):
+    if _type == 1:
+        korea_tz = pytz.timezone('Asia/Seoul')
+        utc_now = datetime.utcnow()
+        korea_now = utc_now.astimezone(korea_tz).strftime('%Y-%m-%d %H:%M:%S')
+        
+        return korea_now
+    elif _type == 2:
+        return time.time()
 
 # ----------- 이하 지표관련 함수들 ------------------
 def get_coin_data(coin:str, interval:str = 'minute15'):
@@ -86,18 +98,17 @@ def get_ex_vols(period:str):
     coin_data = pd.DataFrame()
     # tickers = ['KRW-ETH','KRW-SSX']
     print(f'거래가능한 코인의 수 : ', len(tickers))
-    now = time.strftime('%Y-%m-%d %H:%M:%S')
 
     for ticker in tickers:
         try:
             df = pyupbit.get_ohlcv(ticker,interval=period) # 거래량기준으로 거래량*종가
 
-            ex_vol = (df['close'][-1] * df['volume'][-1]) \
-                + (df['close'][-2] * df['volume'][-2]) \
-                + (df['close'][-3] * df['volume'][-3]) \
-                + (df['close'][-4] * df['volume'][-4]) \
-                + (df['close'][-5] * df['volume'][-5]) \
-                + (df['close'][-6] * df['volume'][-6]) \
+            ex_vol = (df['close'].iloc[-1] * df['volume'].iloc[-1]) \
+                + (df['close'].iloc[-2] * df['volume'].iloc[-2]) \
+                + (df['close'].iloc[-3] * df['volume'].iloc[-3]) \
+                + (df['close'].iloc[-4] * df['volume'].iloc[-4]) \
+                + (df['close'].iloc[-5] * df['volume'].iloc[-5]) \
+                + (df['close'].iloc[-6] * df['volume'].iloc[-6]) \
             
             ex_vols[ticker] = ex_vol
 
@@ -109,14 +120,14 @@ def get_ex_vols(period:str):
                     _df = pd.read_pickle(file_path)
                     df = pd.concat([_df, df], axis=0)
                     df = df.drop_duplicates()
-                    df.to_pickle(file_path)
+                    df.to_pickle(file_path, protocol=4)
                 else:
-                    df.to_pickle(f'data/{ticker}_data.pickle')
+                    df.to_pickle(file_path, protocol=4)
                     
             except Exception as e:
                 print('Exception : ', e)
 
-            print(f'{now}{ticker} 데이터 저장이 완료되었습니다.')
+            print(f'{get_time()} {ticker} 데이터 저장이 완료되었습니다.')
             time.sleep(0.002)
 
         except Exception as e:
@@ -395,3 +406,4 @@ def write_ex_log(position, coin, money, volume, count):
 
 #     except Exception as e:
 #         print(e)
+# /home/ec2-user/Python-3.10.13/myenv/bin/python3.10
