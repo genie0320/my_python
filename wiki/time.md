@@ -55,4 +55,13 @@ one_year_earlier = now - pd.DateOffset(years=1)
 # Add 2 weeks and 3 days to the current date
 two_weeks_three_days_later = now + pd.DateOffset(weeks=2) + pd.DateOffset(days=3)
 # Timestamp('2024-03-30 02:17:22.875524')
+
+# 보너스
+type(df.index[-1]) # pandas._libs.tslibs.timestamps.Timestamp
+df.index[-1] # 인덱스열의 마지막 행
+
+# str 변환
+last_date = res.index[-1]
+last_date_str = last_date.strftime('%Y-%m-%d')
+last_time_str = last_date.strftime('%H:%M:%S')
 ```

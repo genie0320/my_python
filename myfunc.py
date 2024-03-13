@@ -1,409 +1,297 @@
-#%%
 import os
 import time
 import pytz
 from datetime import datetime
-import requests
+# import requests
 import json
 import pickle
 import pyupbit
 import pandas as pd
+import myutil
+import myIndex
 
-import myIndex as myIndex
 
-def get_time(_type=1):
-    if _type == 1:
-        korea_tz = pytz.timezone('Asia/Seoul')
-        utc_now = datetime.utcnow()
-        korea_now = utc_now.astimezone(korea_tz).strftime('%Y-%m-%d %H:%M:%S')
-        
-        return korea_now
-    elif _type == 2:
-        return time.time()
-
-# ----------- 이하 지표관련 함수들 ------------------
-def get_coin_data(coin:str, interval:str = 'minute15'):
+# ------------ 지표체크 관련 ----------------------
+def ma_check(df) -> bool:
     '''
-    # 읽어온 데이터를 pandas df로 준비함.
-    - 'date'를 index로 설정.
+    MA지표가 정배열하고 있는가.
     '''
+    res = False
+    # MA 판단
+    ma_short = df['ma_short'].iloc[-1]
+    ma_long = df['ma_long'].iloc[-1]
+    ma_200 = df['ma_200'].iloc[-1]
+    close = df['close'].iloc[-1]
+    
+    # if close > ma_short and ma_short > ma_long and ma_long > ma_200:
+    if close >= ma_short and ma_short >= ma_long and ma_long >= ma_200:
+        res = True
+    
+    return res
 
-    ohlcv = pyupbit.get_ohlcv(coin, interval)
 
-    df = pd.DataFrame(ohlcv)
+def macd_check(df) -> bool:
+    '''
+    MACD지표가 0 이상이며, 시그널선보다 위인가.
+    '''
+    res = False
+    macd = df['macd'].iloc[-1]
+    macd_signal = df['macd_signal'].iloc[-1]
+    macd_osc = df['macd_osc'].iloc[-1]
+    macd_osc_prev = df['macd_osc'].iloc[-2]
+    last_10_values = df['macd_osc'].tail(10)
+    sum_osc = sum(1 for value in last_10_values if value >= 0) > 7
+    
+    # if macd > macd_signal and macd_osc > 0 and macd_osc > macd_osc_prev:
+    if macd > macd_signal and macd_osc > macd_osc_prev:
+        res = True
+    elif macd > macd_signal and macd_osc > 0 and sum_osc > 7:      
+        res = True
 
-    if not df.index.name:
-        df.index.name = 'date'
+    return res
+
+
+def price_check(df) -> bool:
+    '''
+    가격이 상승중인가.
+    '''
+    res = False
+
+    close_prev = df['close'].iloc[-2]
+    close = df['close'].iloc[-1]
+
+    if close > close_prev:
+        res = True
+
+    return res
+
+
+def rsi_check(df) -> bool:
+    '''
+    RSI지표가 50 이상이며, 시그널선보다 위인가.
+    '''
+    res = False   
+
+    rsi = df['rsi'].iloc[-1]
+    rsi_prev = df['rsi'].iloc[-1]
+    rsi_signal = df['rsi_signal'].iloc[-1]
+    
+    # if rsi > rsi_signal and rsi > rsi_prev and rsi > 50:
+    if rsi > rsi_signal and rsi > 50:
+        res = True
+            
+    return res
+
+
+# ------------ 코인데이터 업데이트 관련 ----------------------
+def get_all_data(df, new_file_path:str) -> pd.DataFrame:
+    
+    # df = pd.read_pickle(file_path)
+
+    df['ma_short'] = myIndex.SMA(df['close'], 12)
+    df['ma_long'] = myIndex.SMA(df['close'], 26)
+    df['ma_200'] = myIndex.SMA(df['close'], 200)
+    _rsi = myIndex.RSI(df['close'], 14, 9)
+    df = pd.concat([df, _rsi], axis=1)
+    _macd = myIndex.MACD(df['close'], 12, 26, 9)
+    df = pd.concat([df, _macd], axis=1)
+
+    df.to_pickle(new_file_path)
+
+    return df
+
+
+# @myutil.time_check
+def update_data(ticker:str, interval:str, file_path:str) -> pd.DataFrame:
+    '''
+    주어진 interval에 대한 데이터를 업데이트한다. 
+    '''
+    if os.path.exists(file_path):
+        _df = pd.read_pickle(file_path)
+        df = pyupbit.get_ohlcv(ticker, interval = interval)
+        df = pd.concat([_df, df], axis=0)
+        df = df.drop_duplicates(keep='last')
+        # print(f'{ticker} 파일을 업데이트합니다.')
     else:
-        pass
-    
-    old_cols = list(df.columns)
-    df.columns = [x.lower() for x in old_cols]
-    # df.rename(columns = {"old_1": "new_1", "old_2": "new_2"}, inplace=True) 
+        df = pyupbit.get_ohlcv(ticker, interval = interval)                
 
+    df.to_pickle(file_path)
     return df
 
-def get_ma(df, period01=5, period02=20, column='close'):
+
+def update_ticker_data(interval:str) -> None:
     '''
-    # 지정칼럼에 대한 장단기 SMA를 value로 계산하여 assign 한다.
-    - 단기선이 장기선을 크로스하면 sell/buy 발생.
-    - period01 : 단기선 계산 기간
-    - period02 : 장기선 계산 기간
+    최신업데이트된 데이터를 받아와서, 
+    여러가지 지표관련 계산열을 추가하여 data_result에 저장한다.
     '''
-    _df = df[column].astype(float)
-    ma_short = myIndex.SMA(_df, period01)
-    ma_long = myIndex.SMA(_df, period02)
-
-    # dataframe에 컬럼 추가
-    df = df.assign(ma_short=ma_short, ma_long=ma_long)
-    # df.rename(columns={'ma_short': f'ma({period01})', 
-    #                    'ma_long': f'ma({period02})'}, inplace=True)
-
-    return df
-
-def get_rsi(df, rsi_period, rsi_signal_period):
-    '''
-    - RSI함수에서 df를 받아와서 concat 하는 함수
-    '''
-    _df = df['close'].astype(float)
-
-    rsi = myIndex.RSI(_df, rsi_period, rsi_signal_period)
-    df_rsi = pd.concat([df, rsi], axis=1)
-
-    return df_rsi
-
-def get_macd(df, fastperiod=12, slowperiod=26, signalperiod=9, column = 'close'):
-    '''
-    # MACD 3종세트를 value로 계산하여 assign 한다.
-    '''
-    _price = df[column].astype(float)
-    macd = myIndex.EMA(_price, fastperiod) - myIndex.EMA(_price, slowperiod)
-    macd_signal = myIndex.EMA(macd, signalperiod)
-    macd_osc = macd - macd_signal
-
-    df = df.assign(macd=macd, macd_signal=macd_signal, macd_osc=macd_osc )
-
-    return df
-
-# ----------- 이하 코인관련 함수들 ------------------
-def get_ex_vols(period:str):
-    '''
-    # 거래량 상위종목 산출.
-    원화거래 가능한 코인과 그 거래볼륨을 산출.
-    
-    :period = 'day', 'minute60'
-    '''
-    tickers = pyupbit.get_tickers('KRW')
-    ex_vols = dict()
-    coin_data = pd.DataFrame()
-    # tickers = ['KRW-ETH','KRW-SSX']
-    print(f'거래가능한 코인의 수 : ', len(tickers))
+    tickers:list = pyupbit.get_tickers('KRW')
 
     for ticker in tickers:
+        time.sleep(0.2)
+        file_path = f'data/{ticker}_{interval}.pickle'
+        new_file_path = f'data_result/{ticker}_{interval}.pickle'
+        df = update_data(ticker, interval, file_path)
+        get_all_data(df, new_file_path)
+
+
+def get_target_coins(interval:str) -> list:
+    '''
+    될성부른 코인을 선별한다.
+    '''
+    tickers:list = pyupbit.get_tickers('KRW')
+    target_coins = []      
+
+    for ticker in tickers:
+        new_file_path = f'data_result/{ticker}_{interval}.pickle'
+
+        df = pd.read_pickle(new_file_path)
+
+        if ma_check(df):
+            if macd_check(df):
+                if rsi_check(df):
+                    if price_check(df):
+                        target_coins.append(ticker)
+                            
+    with open(f'target_coins_{interval}.txt', 'w') as f:
+        json.dump(target_coins, f)
+
+    return target_coins
+
+def sort_coins(target_coins:list, interval:str) -> list:
+    with open(f'target_coins_{interval}.txt', 'r') as f:
+        target_coins = json.load(f)
+
+    sorted_coins = {}
+    for coin in target_coins:
+        df = pd.read_pickle(f'data_result/{coin}_{interval}.pickle')['value']
+        values = round(df.iloc[-1] + df.iloc[-2] + df.iloc[-3] + df.iloc[-4] + df.iloc[-5])
+        sorted_coins[coin] = values
+
+    sorted_dict = dict(sorted(sorted_coins.items(), key=lambda x: x[1], reverse=True))
+    sorted_list = list(sorted_dict)
+    with open(f'sorted_coins_{interval}.txt', 'w') as f:
+        json.dump(sorted_list, f)
+
+    return sorted_list
+
+
+# --------------- 이하 계좌 및 주문관련  -------------------
+def cut_loss(upbit, my_balance) -> list:
+    my_coin = []
+
+    for i in range(1, len(my_balance)):
         try:
-            df = pyupbit.get_ohlcv(ticker,interval=period) # 거래량기준으로 거래량*종가
+            coin = f"KRW-{my_balance[i]['currency']}"
+            avg_buy_price = float(my_balance[i]['avg_buy_price'])
+            current_price = pyupbit.get_current_price(coin)
+            cut_line = avg_buy_price* (1.0 - 0.15)
+            earn_line = avg_buy_price* (1.0 + 0.23)
 
-            ex_vol = (df['close'].iloc[-1] * df['volume'].iloc[-1]) \
-                + (df['close'].iloc[-2] * df['volume'].iloc[-2]) \
-                + (df['close'].iloc[-3] * df['volume'].iloc[-3]) \
-                + (df['close'].iloc[-4] * df['volume'].iloc[-4]) \
-                + (df['close'].iloc[-5] * df['volume'].iloc[-5]) \
-                + (df['close'].iloc[-6] * df['volume'].iloc[-6]) \
-            
-            ex_vols[ticker] = ex_vol
+            if current_price >= earn_line:
+                upbit.sell_market_order(coin, my_balance[i]['balance'])
+                earning_rate = ((avg_buy_price - current_price) / avg_buy_price) * 100
+                print(f'{coin}을 익절했습니다. {round(earning_rate,2)}%')
+            elif current_price <= cut_line:
+                put_order = upbit.get_order(coin)
+                upbit.cancel_order(put_order[0]['uuid'])
+                print(f"손절을 위해 주문을 취소했습니다. {put_order[0]['uuid']}")
+                time.sleep(5)
 
-            # 읽어온 코인데이터를 히스토리삼아 저장
-            try:
-                file_path = f'data/{ticker}_data.pickle'
-                
-                if os.path.exists(file_path):
-                    _df = pd.read_pickle(file_path)
-                    df = pd.concat([_df, df], axis=0)
-                    df = df.drop_duplicates()
-                    df.to_pickle(file_path, protocol=4)
-                else:
-                    df.to_pickle(file_path, protocol=4)
-                    
-            except Exception as e:
-                print('Exception : ', e)
-
-            print(f'{get_time()} {ticker} 데이터 저장이 완료되었습니다.')
-            time.sleep(0.002)
+                upbit.sell_market_order(coin, my_balance[i]['balance'])
+                loss_rate = ((avg_buy_price - current_price) / avg_buy_price) * 100
+                print(f'{coin}을 손절했습니다. {round(loss_rate,2)}%')
+            else :
+                my_coin.append(coin)
 
         except Exception as e:
-            print('Exception :', e)
+            print('Exception cut_loss():', e)
 
-    sorted_coin = (sorted(ex_vols.items(), key=lambda x: x[1], reverse=True)) # sorted를 하는 순간 dict > (Tuple들의) list가 된다.
+    print(my_coin)
 
-    with open("sorted_coin.json", "w") as file:
-    # Dump the Python data into the file as a JSON string
-        json.dump(sorted_coin, file)    
-        print('구매대상 코인 선별이 완료되었습니다.')
+    return my_coin
 
-def get_top_coins(n:int) -> list:
-    '''
-    # 거래량이 가장 큰 코인을 n개 가져온다.
-    
-    :n : 가져올 코인의 수
-    '''
+
+def order(upbit, coins:list) -> str:
     try:
-        # Read JSON data from a file
-        with open("sorted_coin.json", "r") as file:
-            sorted_coin = json.loads(file.read())
+        if position == 'BUY':
+            data = [now]
+            # 스프레드매매는 일단 생각하지 않기로. 
+            # cash = upbit.get_balance('KRW')
+            cash = 5100
+            current_price = pyupbit.get_current_price(coin)
 
-        top_coin = sorted_coin[0:n]
+            volume = current_price / cash
+            bid = upbit.buy_market_order(coin, cash)
+            time.sleep(5)
 
-        # return list(dict(top_coin).keys())
-        return list(dict(top_coin).keys())
-    except Exception as e:
-        print('Exception : ', 'Read sorted coin data', e)
+            # 구매완료시까지 잠시 기다렸다가...
+            # 익절가격을 미리 정해서 동일 물량을 지정가로 걸어두기.
+            put_order = upbit.get_order(coin, state="done")
+            buy_price = float(put_order[0]['avg_buy_price'])
+            ask_price = pyupbit.get_tick_size(buy_price * 1.05)
+            ask = upbit.sell_limit_order(coin, ask_price, volume)
 
-def CheckCoin(coins):
-    '''
-    업비트의 위험/주의 코인경보를 대상코인에서 제외한다.
-    
-    :return list[coin_caution, safe_coin]
-    '''
-    coin_caution = []
+            data.append(bid)
+            data.append(ask)
 
-    url = "https://api.upbit.com/v1/market/all?isDetails=true"
-    headers = {"accept": "application/json"}
-    res = requests.get(url, headers=headers)
-    all_coin = res.json()
-    
-    for coin in all_coin:
-        if coin['market'].startswith('KRW') and coin['market_event']['warning'] == True:
-            coin_caution.append(coin['market'])
+            with open('spread_cnt.json', 'a') as f:
+                json.dump(data, f)
 
-    safe_coin = []
-    
-    for coin in coins:
-        if coin not in coin_caution:
-            safe_coin.append(coin)
-        else:
-            print(f'다음 코인은 구매대상에서 제외합니다. : {coin}')
-    return [coin_caution, safe_coin]
-
-def get_safe_coin() -> list:
-
-    top_coin = get_top_coins(20)
-    safe_coin = CheckCoin(top_coin)[1]
-
-    return safe_coin
-
-def get_all_df(coin:str) -> str:
-
-    # Criteria
-    criteria_interval = 'minute15'
-
-    # MA
-    ma_short_period = 5
-    ma_long_period  = 20
-
-    # RSI
-    rsi_period = 30
-    rsi_signal_period = 9
-
-    # MACD parameters
-    macd_fast_period = 12
-    macd_slow_period  = 26
-    macd_signal_period = 9
-
-    _coin_df = get_coin_data(coin, criteria_interval)
-    _coin_df_ma = get_ma(_coin_df, ma_short_period, ma_long_period)
-    _coin_df_macd = get_macd(_coin_df_ma, macd_fast_period, macd_slow_period, macd_signal_period)
-    _coin_df_rsi = get_rsi(_coin_df_macd, rsi_period, rsi_signal_period)
-
-    return _coin_df_rsi.tail()
-
-# ----------- 이하 매매타이밍관련 함수들 ------------------
-def get_buy_signal(ohlcv_ma_rsi):
-    '''
-    5평선이 20평선보다 위에 있고, 
-    이전 5평선보다 이번 5평선이 클 때 (가격상승중일때) TRUE 반환.
-    '''
-    signal = False
-    
-    _current = ohlcv_ma_rsi.iloc[-1]
-    _prev = ohlcv_ma_rsi.iloc[-2]
-
-    if _current['ma(5)'] - _current['ma(20)'] > 0:
-        if _current['ma(5)'] >= _prev['ma(5)']:
-            signal = True
-
-    return signal
-
-
-def get_last_order(coin):
-    result = []
-    file_path = "ex_rerult.json"
-
-    with open(file_path) as f:
-        js = json.loads(f.read()) ## json 라이브러리 이용
-
-    for data in js:
-        if data['coin'] == coin:
-            result.append(data)
-
-    # return df.filter(items = [coin], axis=0)
-    return result
-
-
-
-
-
-# ----------- 이하 테스트가 필요한 함수들 ------------------
-def get_stochastic(df, n=14, m=5, t=5):
-    '''
-    일자(n,m,t)에 따른 Stochastic(KDJ)의 값을 구하기 위해 함수형태로 만듬
-    '''
-    # 입력받은 값이 dataframe이라는 것을 정의해줌
-    df = pd.DataFrame(df)
-
-    # n일중 최고가
-    ndays_high = df.High.rolling(window=n, min_periods=1).max()
-    
-    # n일중 최저가
-    ndays_low = df.Low.rolling(window=n, min_periods=1).min()
-
-    # Fast%K 계산
-    fast_k = ((df.Close - ndays_low) / (ndays_high - ndays_low)) * 100
-
-    # Fast%D (=Slow%K) 계산
-    slow_k = fast_k.ewm(span=m).mean()
-
-    # Slow%D 계산
-    slow_d = slow_k.ewm(span=t).mean()
-
-    # dataframe에 컬럼 추가
-    df = df.assign(fast_k=fast_k, fast_d=slow_k, slow_k=slow_k, slow_d=slow_d)
-
-    return df
-
-def TSI(df, s1=25, s2=13, s3=7):
-    '''
-    # 실제 강도 지수 (s1: 첫번째 스무딩 윈도우, s2: 두번째 스무딩 윈도우, s3: TSI를 스무딩)
-
-    :사용방법 :
-    - import numpy as np
-    ohlcv_w_TSI = TSI(ohlcv_w_RSI, 25, 13, 10)
-    ohlcv_w_TSI = TSI(ohlcv_w_TSI, 40, 20, 10)
-    ohlcv_w_TSI.tail()
-    '''
-    # 입력받은 값이 dataframe이라는 것을 정의해줌
-    df = pd.DataFrame(df)
-
-    # Price Change (PC)
-    PC = df.close.diff()
-
-    # PC Smoothing (지수 이동 평균)
-    PCS = EMA(PC, s1)
-    
-    # PC Double Smoothing
-    PCDS = EMA(PCS, s2)
-
-    # Absolute of PC
-    APC = PC.abs()
-
-    # APC Smoothing
-    APCS = EMA(APC, s1)
-
-    # APC Double Smoothing
-    APCDS = EMA(APCS, s2)
-
-    # True Strength Index (TSI)
-    TSI = 100 * (PCDS / APCDS)
-    TSI_signal = EMA(TSI, s3)  
-
-    # Equilibrium Line (Zero Line)
-    ZL = np.zeros([TSI.shape[0],1])
-
-    # dataframe에 컬럼 추가
-    df = df.assign(ZL=ZL, TSI=TSI, TSI_signal=TSI_signal)
-    df.rename(columns={'TSI': f'TSI({s1},{s2})', 
-                       'TSI_signal': f'TSI({s1},{s2},{s3})'}, inplace=True)
-
-    return df
-
-
-def write_ex_log(position, coin, money, volume, count):
-    '''
-    date, coin, position='KEEP', count, buy, sell, ex_rate, quantity, remain
-    '''
-    position = position
-    date = time.strftime('%Y-%m-%d %H:%M:%S')
-    file_path = "ex_rerult.json"
-
-    with open(file_path) as f:
-        js = json.loads(f.read()) ## json 라이브러리 이용
-        count = count
-        ex_rate = 0
-        remain = 0
-
-    if position == "SELL":     
-        ex_log = {
-            "date":date,
-            "coin":coin,
-            "position":"SELL",
-            "count":count,
-            "buy":0,
-            "sell":money,
-            "ex_rate":ex_rate,
-            "quantity":volume,
-            "remain":remain
-            }
-        js.append(ex_log)
+            return (f'{coin} 구매완료 / {volume}')
         
-    elif position == "BUY":
-        ex_log = {
-            "date":date,
-            "coin":coin,
-            "position":"BUY",
-            "count":count,
-            "buy":money,
-            "sell":0,
-            "ex_rate":ex_rate,
-            "quantity":volume,
-            "remain":remain
-            }      
-        js.append(ex_log)  
+        elif position == 'SELL':
+            # 팔려면 lock 걸려 있는 애를 풀어줘야 한다. uuid 필요.
+            volume = upbit.get_balance(coin)
+            ask = upbit.sell_market_order(coin, volume)
 
-    return ex_log
+            coin_acc = get_coin_acc(coin)
+            avg_buy_price = coin_acc['avg_buy_price']
+            current_price = pyupbit.get_current_price(coin)
+            earning_rate = ((current_price - avg_buy_price) / avg_buy_price) * 100
 
-# 매도시그널.
-# 가격 단기선이 장기선보다 아래에 있고, rsi 시그널선보다 아래에 있으며, 맥디 볼륨이 이전 값보다 낮을 때
+            res = f'{coin}을 매각완료. {round(earning_rate,2)}%'
+        
+        elif position == 'KEEP':
+            res = f'{coin} 관망'
 
-# def get_sell_signal(df, coin) -> bool:
-#     ma_sig, macd_sig, rsi_sig = False, False, False
+    except Exception as e:
+        print('Exception From order() - ', e)
 
-#     ma_short = df['ma_short'][-1]
-#     ma_long = df['ma_long'][-1]
-#     close_prev = df['close'][-2]
-#     close = df['close'][-1]
+    return res
 
-#     macd = df['macd'][-1]
-#     macd_signal = df['macd_signal'][-1]
-#     macd_osc = df['macd_osc'][-1]
-#     macd_osc_prev = df['macd_osc'][-2]
+'''
 
-#     rsi_prev = df['RSI'][-2]
-#     rsi = df['RSI'][-1]
-#     rsi_signal = df['RSI_SIGNAL'][-1]
+# --------------- 이하 사용하지 않는 함수 -------------------
+# @myutil.time_check
+def expand_data(ticker:str, interval:str, n:int, file_path:str) -> None:
+    ''
+    # 지표계산을 위한 데이터가 너무 적은 경우,
+    # file_path의 데이터를 읽어와서 이전 데이터를 덧붙여 주어진 갯수만큼의 데이터셋을 구성한다.
+    ''
+    st_day = dt.datetime.now()
 
-#     try:
-#         if macd_osc > 0 and macd_osc <= macd_osc_prev :
-#             macd_sig = True
-#         if rsi < rsi_signal and rsi <= rsi_prev and rsi > 50:
-#             rsi_sig = True
-#         if ma_short < ma_long and close < ma_short and close < close_prev:
-#             ma_sig = True
+    try:
+        calls = 0
+        if interval == 'minute15':
+            cnt = int(200 // (1440/15))
+        elif interval == 'minute60':
+            cnt = int(200 // (1440/60))
+        elif interval == 'day':
+            cnt = int(199 // (1440/1440))
+        
+        while len(ohlcv) < n and calls < 10:
+            calls += 1
+            day_delta = (st_day - dt.timedelta(days=cnt))
+            st_day = day_delta
+            _ohlcv = pyupbit.get_ohlcv(ticker, interval = interval, to = day_delta.strftime('%Y-%m-%d'))
+            ohlcv = pd.concat([_ohlcv, ohlcv], axis=0)
+            ohlcv = ohlcv.drop_duplicates()
+            # print(f'{ticker},{len(ohlcv)}개의 데이터를 수집했습니다.')
 
-#         if ma_sig and macd_sig and rsi_sig:
-#             return [True, [ma_sig, macd_sig, rsi_sig]]
-#         else:
-#             return [False, [ma_sig, macd_sig, rsi_sig]]        
+            time.sleep(0.5)
 
+        ohlcv.to_pickle(file_path)    
 
-#     except Exception as e:
-#         print(e)
-# /home/ec2-user/Python-3.10.13/myenv/bin/python3.10
+    except Exception as e:
+        print('Exception : ', e)
+'''

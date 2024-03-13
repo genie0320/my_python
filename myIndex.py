@@ -70,8 +70,8 @@ def RSI(df, rsi_period=14, rsi_signal_period=9):
     RSI = 100.0 - (100.0/ (1.0 + RS))
     RSI_SIGNAL = RSI.ewm(span=rsi_signal_period, adjust=False, min_periods=rsi_signal_period).mean()
 
-    df_rsi = pd.concat([RS, RSI, RSI_SIGNAL],axis=1)
-    df_rsi.columns = ['RS','RSI', 'RSI_SIGNAL']
+    df_rsi = pd.concat([RSI, RSI_SIGNAL],axis=1)
+    df_rsi.columns = ['rsi', 'rsi_signal']
 
     return df_rsi
 
@@ -82,6 +82,6 @@ def MACD(df, fastperiod=12, slowperiod=26, signalperiod=9):
     macd_osc = macd - macd_signal
 
     df_macd = pd.concat([macd, macd_signal, macd_osc],axis=1)
-    df_macd.columns = ['MACD','Signal','Oscillator']
+    df_macd.columns = ['macd','macd_signal','macd_osc']
 
     return df_macd

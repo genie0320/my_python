@@ -32,6 +32,28 @@ def example_function():
 example_function()
 ```
 
+##### 복리이자율 계산식
+```python
+# 원금
+principal = 10000
+# 이율
+interest_rate = 0.01
+
+# 한 달 동안 이자가 붙는 횟수
+days_in_month = 30
+
+# 한 달 뒤의 총 금액 계산
+total_amount = principal * (1 + interest_rate) ** days_in_month
+
+# 수익률 계산
+profit_rate = ((total_amount - principal) / principal) * 100
+
+print(f"한 달 뒤의 총 금액: {total_amount}")
+print(f"수익률: {profit_rate:.2f}%")
+```
+
+
+
 ##### title
 ```python
 
