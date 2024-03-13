@@ -15,14 +15,17 @@ today # datetime.datetime(2024, 3, 13, 1, 46, 54, 449217)
 type(now) # datetime.datetime
 ```
 
-## 시간계산 (일반)
+### 시간변환 str <> int
 ```python
 now_str = dt.datetime.now().strftime("%Y-%m-%d") 
 # '2024-03-13' (str)
 
 now_dt = dt.datetime.strptime(now_str, "%Y-%m-%d") 
 # datetime.datetime(2024, 3, 13, 0, 0)
+```
 
+## 시간계산 (일반)
+```python
 now_add = now_dt + dt.timedelta(hours=32) 
 # datetime.datetime(2024, 3, 14, 8, 0) : 32시간 뒤
 
