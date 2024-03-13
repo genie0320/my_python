@@ -1,3 +1,5 @@
+import time
+
 def moving_rate(prev_price:float, current_price:float) -> float:
     return round((current_price - prev_price) / prev_price * 100, 3)
 
@@ -6,7 +8,7 @@ def moving_rate(prev_price:float, current_price:float) -> float:
 
 # moving_rate(_price, price)
 
-def calc_time(func):
+def time_check(func):
     def wrapper(*args, **kwargs):
         start_time = time.time()
         result = func(*args, **kwargs)
